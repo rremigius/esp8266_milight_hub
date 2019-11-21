@@ -90,6 +90,9 @@ protected:
   void handleRequest(const JsonObject& request);
   void handleWsEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
 
+  void handleBulkTransitions(RequestContext& request);
+  void handleBulkUpdateGroups(RequestContext& request);
+
   File updateFile;
 
   PassthroughAuthProvider<Settings> authProvider;

@@ -79,6 +79,16 @@ void MiLightHttpServer::begin() {
     .buildHandler("/firmware")
     .handleOTA();
 
+  server
+    .buildHandler("/bulk-transitions")
+    .on(HTTP_PUT, std::bind(&MiLightHttpServer::handleBulkTransitions, this, _1))
+    .on(HTTP_POST, std::bind(&MiLightHttpServer::handleBulkTransitions, this, _1));
+
+  server
+    .buildHandler("/bulk-gateways")
+    .on(HTTP_PUT, std::bind(&MiLightHttpServer::handleBulkUpdateGroups, this, _1))
+    .on(HTTP_POST, std::bind(&MiLightHttpServer::handleBulkUpdateGroups, this, _1));
+
   server.clearBuilders();
 
   // set up web socket server
@@ -662,5 +672,90 @@ void MiLightHttpServer::handleCreateTransition(RequestContext& request) {
     request.response.json[F("success")] = true;
   } else {
     request.response.setCode(400);
+  }
+}
+
+void MiLightHttpServer::handleBulkTransitions(RequestContext& request) {
+  JsonArray bulk = request.getJsonBody().as<JsonArray>();
+  JsonArray responses = request.response.json.createNestedArray("responses");
+
+  for(auto value : bulk) {
+    JsonObject response = responses.createNestedObject();
+
+    JsonObject body = value.as<JsonObject>();
+    if (! body.containsKey(GroupStateFieldNames::DEVICE_ID)
+      || ! body.containsKey(GroupStateFieldNames::GROUP_ID)
+      || ! body.containsKey(F("remote_type"))) {
+      char buffer[200];
+      sprintf_P(buffer, PSTR("Must specify required keys: device_id, group_id, remote_type"));
+
+      request.response.setCode(400);
+      response["error"] = buffer;
+      return;
+    }
+
+    const String _deviceId = body[GroupStateFieldNames::DEVICE_ID];
+    uint8_t _groupId = body[GroupStateFieldNames::GROUP_ID];
+    const MiLightRemoteConfig* _remoteType = MiLightRemoteConfig::fromType(body[F("remote_type")].as<const char*>());
+
+    if (_remoteType == nullptr) {
+      char buffer[40];
+      sprintf_P(buffer, PSTR("Unknown device type\n"));
+      request.response.setCode(400);
+      response["error"] = buffer;
+      return;
+    }
+
+    milightClient->prepare(_remoteType, parseInt<uint16_t>(_deviceId), _groupId);
+
+    StaticJsonDocument<1000> doc = StaticJsonDocument<1000>();
+    if (milightClient->handleTransition(body, doc)) {
+      response["success"] = true;
+    } else {
+      response["error"] = doc["error"];
+      request.response.setCode(400);
+    }
+  }
+}
+
+void MiLightHttpServer::handleBulkUpdateGroups(RequestContext& request) {
+  JsonArray bulk = request.getJsonBody().as<JsonArray>();
+  if(bulk.isNull()) {
+    request.response.setCode(400);
+    return;
+  }
+
+  JsonArray responses = request.response.json.createNestedArray("responses");
+
+  for(auto value : bulk) {
+    JsonObject body = value.as<JsonObject>();
+    JsonObject response = responses.createNestedObject();
+    
+    if (! body.containsKey(GroupStateFieldNames::DEVICE_ID)
+      || ! body.containsKey(GroupStateFieldNames::GROUP_ID)
+      || ! body.containsKey(F("remote_type"))) {
+      char buffer[200];
+      sprintf_P(buffer, PSTR("Must specify required keys: device_id, group_id, remote_type"));
+
+      request.response.setCode(400);
+      response["error"] = buffer;
+      return;
+    }
+
+    const String _deviceId = body[GroupStateFieldNames::DEVICE_ID];
+    uint8_t _groupId = body[GroupStateFieldNames::GROUP_ID];
+    const MiLightRemoteConfig* _remoteType = MiLightRemoteConfig::fromType(body[F("remote_type")].as<const char*>());
+
+    if (_remoteType == NULL) {
+      char buffer[40];
+      sprintf_P(buffer, PSTR("Unknown device type: %s"), _remoteType);
+      request.response.setCode(400);
+      response["error"] = buffer;
+      return;
+    }
+
+    milightClient->prepare(_remoteType, parseInt<uint16_t>(_deviceId), _groupId);
+    handleRequest(body);
+    response["success"] = true;
   }
 }
